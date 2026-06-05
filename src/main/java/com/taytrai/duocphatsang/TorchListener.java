@@ -14,67 +14,89 @@ import java.util.UUID;
 
 public class TorchListener implements Listener {
 
-    // Lưu vị trí block ánh sáng ảo của từng người chơi để xóa khi họ di chuyển
     private final HashMap<UUID, Location> playerLights = new HashMap<>();
+    // Lưu thời gian bấm nút ngồi của người chơi để tính toán "Double Crouch"
+    private final HashMap<UUID, Long> lastSneakTime = new HashMap<>();
 
+    // --- TÍNH NĂNG ĐỔI TAY BẰNG CÁCH NGỒI 2 LẦN (DÀNH CHO PE) ---
+    @EventHandler
+    public void onPlayerSneak(PlayerToggleSneakEvent event) {
+        // Chỉ xử lý khi người chơi bắt đầu ngồi xuống (isSneaking = true)
+        if (!event.isSneaking()) return;
+
+        Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+        long currentTime = System.currentTimeMillis();
+
+        // Nếu khoảng cách giữa 2 lần bấm ngồi nhỏ hơn 500 mili-giây (0.5 giây)
+        if (lastSneakTime.containsKey(uuid) && (currentTime - lastSneakTime.get(uuid) < 500)) {
+            ItemStack mainHand = player.getInventory().getItemInMainHand();
+            ItemStack offHand = player.getInventory().getItemInOffHand();
+
+            // Kiểm tra nếu một trong hai tay đang cầm đuốc/nguồn sáng thì mới cho đổi
+            if (isSourceOfLight(mainHand.getType()) || isSourceOfLight(offHand.getType())) {
+                // Hoán đổi item giữa tay phải và tay trái
+                player.getInventory().setItemInMainHand(offHand);
+                player.getInventory().setItemInOffHand(mainHand);
+                
+                // Cập nhật lại ánh sáng ngay lập tức
+                handleTorchLight(player, player.getLocation());
+            }
+            lastSneakTime.remove(uuid); // Reset sau khi đổi thành công
+        } else {
+            // Lưu lại thời gian bấm ngồi lần 1
+            lastSneakTime.put(uuid, currentTime);
+        }
+    }
+
+    // --- CÁC LOGIC XỬ LÝ ÁNH SÁNG GIỮ NGUYÊN ---
     @EventHandler
     public void onPlayerMove(PlayerMoveEvent event) {
-        // Chỉ xử lý nếu người chơi thực sự bước sang block khác
         if (event.getFrom().getBlockX() == event.getTo().getBlockX() &&
             event.getFrom().getBlockY() == event.getTo().getBlockY() &&
             event.getFrom().getBlockZ() == event.getTo().getBlockZ()) {
             return;
         }
-
-        Player player = event.getPlayer();
-        handleTorchLight(player, event.getTo());
+        handleTorchLight(event.getPlayer(), event.getTo());
     }
 
     @EventHandler
     public void onItemSwap(PlayerSwapHandItemsEvent event) {
-        // Cập nhật ánh sáng khi đổi item sang tay trái
         handleTorchLight(event.getPlayer(), event.getPlayer().getLocation());
     }
 
     @EventHandler
     public void onItemHeld(PlayerItemHeldEvent event) {
-        // Cập nhật khi đổi item tay phải (vì có thể ảnh hưởng trạng thái)
         handleTorchLight(event.getPlayer(), event.getPlayer().getLocation());
     }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        // Xóa dữ liệu khi người chơi thoát để tránh rác bộ nhớ
         removeLight(event.getPlayer());
+        lastSneakTime.remove(event.getPlayer().getUniqueId());
     }
 
     private void handleTorchLight(Player player, Location loc) {
         ItemStack offHandItem = player.getInventory().getItemInOffHand();
 
-        // Kiểm tra xem tay trái có cầm các loại nguồn sáng không
         if (isSourceOfLight(offHandItem.getType())) {
             Location blockLoc = loc.getBlock().getLocation();
 
-            // Nếu vị trí mới trùng với vị trí cũ đã phát sáng thì bỏ qua
             if (playerLights.containsKey(player.getUniqueId()) && 
                 playerLights.get(player.getUniqueId()).equals(blockLoc)) {
                 return;
             }
 
-            // Xóa block sáng ở vị trí cũ trước
             removeLight(player);
 
-            // Chỉ tạo ánh sáng ảo nếu chỗ đó là không khí hoặc block đi qua được
             if (blockLoc.getBlock().getType().isAir()) {
                 Light lightData = (Light) Material.LIGHT.createBlockData();
-                lightData.setLevel(15); // Độ sáng tối đa giống đuốc thật
+                lightData.setLevel(15);
 
-                // Gửi block sáng ảo chỉ cho người chơi đó thấy
                 player.sendBlockChange(blockLoc, lightData);
                 playerLights.put(player.getUniqueId(), blockLoc);
             }
         } else {
-            // Nếu không cầm đuốc nữa thì tắt ánh sáng đi
             removeLight(player);
         }
     }
@@ -83,13 +105,11 @@ public class TorchListener implements Listener {
         UUID uuid = player.getUniqueId();
         if (playerLights.containsKey(uuid)) {
             Location oldLoc = playerLights.get(uuid);
-            // Trả lại block thật ban đầu tại vị trí đó cho người chơi thấy
             player.sendBlockChange(oldLoc, oldLoc.getBlock().getBlockData());
             playerLights.remove(uuid);
         }
     }
 
-    // Hàm kiểm tra các loại đuốc hoặc lồng đèn được phép phát sáng ở tay trái
     private boolean isSourceOfLight(Material material) {
         return material == Material.TORCH || 
                material == Material.SOUL_TORCH || 
