@@ -1,0 +1,6 @@
+name: LeftHandTorch
+version: '1.0'
+main: com.taytrai.duocphatsang.LeftHandTorch
+api-version: '1.21'
+author: Xnos
+description: Plugin cam duoc tay trai phat sang cho server Purpur 1.21
