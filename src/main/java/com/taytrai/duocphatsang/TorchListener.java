@@ -1,55 +1,78 @@
 package com.taytrai.duocphatsang;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.data.type.Light;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.HashMap;
 import java.util.UUID;
 
 public class TorchListener implements Listener {
 
+    private final JavaPlugin plugin;
     private final HashMap<UUID, Location> playerLights = new HashMap<>();
-    // Lưu thời gian bấm nút ngồi của người chơi để tính toán "Double Crouch"
     private final HashMap<UUID, Long> lastSneakTime = new HashMap<>();
 
-    // --- TÍNH NĂNG ĐỔI TAY BẰNG CÁCH NGỒI 2 LẦN (DÀNH CHO PE) ---
+    // Nhận bản cài đặt từ file gốc để chạy Delay
+    public TorchListener(JavaPlugin plugin) {
+        this.plugin = plugin;
+    }
+
+    // ⚡ MỚI: Xử lý khi đập block đi xuống
+    @EventHandler
+    public void onBlockBreak(BlockBreakEvent event) {
+        Player player = event.getPlayer();
+        // Chờ 1 tick cho hệ thống phá block xong rồi mới bật đuốc ảo
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            handleTorchLight(player, player.getLocation());
+        }, 1L);
+    }
+
+    // ⚡ MỚI: Xử lý khi đặt block đi lên (Tower)
+    @EventHandler
+    public void onBlockPlace(BlockPlaceEvent event) {
+        Player player = event.getPlayer();
+        // Chờ 1 tick cho block mới ổn định rồi mới tính toán lại ánh sáng
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            handleTorchLight(player, player.getLocation());
+        }, 1L);
+    }
+
+    // --- CÁC SỰ KIỆN CŨ GIỮ NGUYÊN ---
     @EventHandler
     public void onPlayerSneak(PlayerToggleSneakEvent event) {
-        // Chỉ xử lý khi người chơi bắt đầu ngồi xuống (isSneaking = true)
         if (!event.isSneaking()) return;
 
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
         long currentTime = System.currentTimeMillis();
 
-        // Nếu khoảng cách giữa 2 lần bấm ngồi nhỏ hơn 500 mili-giây (0.5 giây)
         if (lastSneakTime.containsKey(uuid) && (currentTime - lastSneakTime.get(uuid) < 500)) {
             ItemStack mainHand = player.getInventory().getItemInMainHand();
             ItemStack offHand = player.getInventory().getItemInOffHand();
 
-            // Kiểm tra nếu một trong hai tay đang cầm đuốc/nguồn sáng thì mới cho đổi
             if (isSourceOfLight(mainHand.getType()) || isSourceOfLight(offHand.getType())) {
-                // Hoán đổi item giữa tay phải và tay trái
                 player.getInventory().setItemInMainHand(offHand);
                 player.getInventory().setItemInOffHand(mainHand);
                 
-                // Cập nhật lại ánh sáng ngay lập tức
-                handleTorchLight(player, player.getLocation());
+                // Delay 1 chút khi đổi tay bằng nút ngồi
+                Bukkit.getScheduler().runTaskLater(plugin, () -> handleTorchLight(player, player.getLocation()), 1L);
             }
-            lastSneakTime.remove(uuid); // Reset sau khi đổi thành công
+            lastSneakTime.remove(uuid);
         } else {
-            // Lưu lại thời gian bấm ngồi lần 1
             lastSneakTime.put(uuid, currentTime);
         }
     }
 
-    // --- CÁC LOGIC XỬ LÝ ÁNH SÁNG GIỮ NGUYÊN ---
     @EventHandler
     public void onPlayerMove(PlayerMoveEvent event) {
         if (event.getFrom().getBlockX() == event.getTo().getBlockX() &&
@@ -89,7 +112,8 @@ public class TorchListener implements Listener {
 
             removeLight(player);
 
-            if (blockLoc.getBlock().getType().isAir()) {
+            // Cho phép phát sáng ở cả không khí hoặc khi đang bơi dưới nước
+            if (blockLoc.getBlock().getType().isAir() || blockLoc.getBlock().getType() == Material.WATER) {
                 Light lightData = (Light) Material.LIGHT.createBlockData();
                 lightData.setLevel(15);
 
